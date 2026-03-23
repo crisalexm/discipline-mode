@@ -12,6 +12,7 @@ import {
   getBMICategory,
   getPerformanceBadge,
   calcGoalProgress,
+  isGainGoal,
   getCurrentWeekNumber,
   formatDate,
   getAvatarColor,
@@ -113,35 +114,45 @@ function RankingTab({ members, weighIns, onSelectMember }) {
 
       const currentWeight = weekWI?.weight_kg ?? null
       const initialWeight = member.initial_weight_kg
-      const totalLoss = currentWeight !== null ? initialWeight - currentWeight : null
+      const gainGoal = isGainGoal(initialWeight, member.goal_weight_kg)
+      const totalChange = currentWeight !== null ? currentWeight - initialWeight : null
       const weeklyChange = currentWeight !== null && prevWI ? currentWeight - prevWI.weight_kg : null
       const goalProgress = currentWeight !== null ? calcGoalProgress(initialWeight, currentWeight, member.goal_weight_kg) : 0
-      const badge = getPerformanceBadge(weeklyChange)
+      const badge = getPerformanceBadge(weeklyChange, gainGoal)
 
-      return { ...member, currentWeight, initialWeight, totalLoss, weeklyChange, goalProgress, badge, hasData: weekWI !== null }
+      return { ...member, currentWeight, initialWeight, totalChange, weeklyChange, goalProgress, gainGoal, badge, hasData: weekWI !== null }
     }).sort((a, b) => {
       if (a.hasData && !b.hasData) return -1
       if (!a.hasData && b.hasData) return 1
-      if (a.totalLoss === null) return 1
-      if (b.totalLoss === null) return -1
-      return b.totalLoss - a.totalLoss
+      return b.goalProgress - a.goalProgress
     })
   }, [members, weighIns, selectedWeek])
 
-  // Mensaje motivacional
+  // Mensaje motivacional (direction-aware)
   const motivMsg = useMemo(() => {
-    const fire = rankingData.filter((m) => m.weeklyChange !== null && m.weeklyChange <= -1.8).length
-    const losing = rankingData.filter((m) => m.weeklyChange !== null && m.weeklyChange < 0).length
+    const onTrack = rankingData.filter((m) => {
+      if (m.weeklyChange === null) return false
+      return m.gainGoal ? m.weeklyChange > 0 : m.weeklyChange < 0
+    }).length
+    const fire = rankingData.filter((m) => {
+      if (m.weeklyChange === null) return false
+      return m.gainGoal ? m.weeklyChange >= 0.5 : m.weeklyChange <= -1.8
+    }).length
     const n = rankingData.length
     if (fire >= n * 0.6) return { msg: '¡El grupo está EN LLAMAS esta semana! 🔥', cls: 'from-orange-900/40 to-red-900/40 border-orange-700' }
-    if (losing >= n * 0.7) return { msg: '¡Gran semana para el grupo! La mayoría bajando. 💪', cls: 'from-green-900/40 to-teal-900/40 border-green-700' }
-    if (losing >= n * 0.4) return { msg: 'La mitad del grupo avanzando. ¡A darle más! 💙', cls: 'from-blue-900/40 to-indigo-900/40 border-blue-700' }
+    if (onTrack >= n * 0.7) return { msg: '¡Gran semana! La mayoría avanzando hacia su meta. 💪', cls: 'from-green-900/40 to-teal-900/40 border-green-700' }
+    if (onTrack >= n * 0.4) return { msg: 'La mitad del grupo en camino. ¡A darle más! 💙', cls: 'from-blue-900/40 to-indigo-900/40 border-blue-700' }
     return { msg: 'Semana difícil. ¡La próxima se retoma con todo! 💪', cls: 'from-slate-800 to-slate-700 border-slate-600' }
   }, [rankingData])
 
-  const totalLostGroup = rankingData.reduce((s, m) => s + (m.totalLoss || 0), 0)
+  const totalLostGroup = rankingData
+    .filter((m) => !m.gainGoal && m.totalChange !== null && m.totalChange < 0)
+    .reduce((s, m) => s + Math.abs(m.totalChange), 0)
   const activeCount = rankingData.filter((m) => m.hasData).length
-  const fireCount = rankingData.filter((m) => m.weeklyChange !== null && m.weeklyChange <= -1.8).length
+  const fireCount = rankingData.filter((m) => {
+    if (m.weeklyChange === null) return false
+    return m.gainGoal ? m.weeklyChange >= 0.5 : m.weeklyChange <= -1.8
+  }).length
 
   return (
     <div className="space-y-4">
@@ -198,13 +209,22 @@ function RankingTab({ members, weighIns, onSelectMember }) {
 
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-white font-semibold text-sm">{member.name.split(' ')[0]}</span>
-                  <div className="flex items-center gap-2">
-                    {member.weeklyChange !== null && (
-                      <span className={`text-xs font-bold ${member.weeklyChange < 0 ? 'text-green-400' : member.weeklyChange > 0 ? 'text-red-400' : 'text-slate-400'}`}>
-                        {member.weeklyChange > 0 ? '+' : ''}{member.weeklyChange.toFixed(1)} sem
-                      </span>
-                    )}
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-white font-semibold text-sm">{member.name.split(' ')[0]}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full flex-shrink-0 ${member.gainGoal ? 'bg-purple-900/50 text-purple-300' : 'bg-blue-900/50 text-blue-300'}`}>
+                      {member.gainGoal ? '💪 Subir' : '🎯 Bajar'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {member.weeklyChange !== null && (() => {
+                      const good = member.gainGoal ? member.weeklyChange > 0 : member.weeklyChange < 0
+                      const sign = member.weeklyChange > 0 ? '+' : ''
+                      return (
+                        <span className={`text-xs font-bold ${good ? 'text-green-400' : member.weeklyChange === 0 ? 'text-slate-400' : 'text-red-400'}`}>
+                          {sign}{member.weeklyChange.toFixed(1)} sem
+                        </span>
+                      )
+                    })()}
                     <span className="text-lg leading-none">{member.badge.emoji}</span>
                   </div>
                 </div>
@@ -213,11 +233,15 @@ function RankingTab({ members, weighIns, onSelectMember }) {
                   <span className="text-slate-300 font-medium">
                     {member.currentWeight !== null ? `${member.currentWeight.toFixed(1)} kg` : 'Pendiente ⏳'}
                   </span>
-                  {member.totalLoss !== null && (
-                    <span className={member.totalLoss > 0 ? 'text-green-400' : 'text-red-400'}>
-                      {member.totalLoss > 0 ? '−' : '+'}{Math.abs(member.totalLoss).toFixed(1)} kg total
-                    </span>
-                  )}
+                  {member.totalChange !== null && (() => {
+                    const good = member.gainGoal ? member.totalChange > 0 : member.totalChange < 0
+                    const sign = member.totalChange > 0 ? '+' : ''
+                    return (
+                      <span className={good ? 'text-green-400' : member.totalChange === 0 ? 'text-slate-400' : 'text-red-400'}>
+                        {sign}{member.totalChange.toFixed(1)} kg total
+                      </span>
+                    )
+                  })()}
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -304,12 +328,18 @@ function GraficosTab({ members, weighIns }) {
           const mWIs = weighIns.filter((w) => w.member_id === m.id).sort((a, b) => new Date(a.weigh_in_date) - new Date(b.weigh_in_date))
           const latest = mWIs.at(-1)
           const initial = m.initial_weight_kg
-          const loss = latest ? initial - latest.weight_kg : null
+          const gainGoal = isGainGoal(initial, m.goal_weight_kg)
+          // totalChange: positive = gained, negative = lost
+          const totalChange = latest ? latest.weight_kg - initial : null
+          const changeIsGood = totalChange === null ? null : gainGoal ? totalChange > 0 : totalChange < 0
           return (
             <div key={m.id} className="bg-slate-800 border border-slate-700 rounded-xl p-3">
               <div className="flex items-center gap-2 mb-2">
                 <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: getMemberColor(m.name) }} />
                 <span className="text-white text-xs font-semibold truncate">{m.name.split(' ')[0]}</span>
+                <span className={`text-xs px-1 py-0.5 rounded-full ml-auto flex-shrink-0 ${gainGoal ? 'bg-purple-900/50 text-purple-300' : 'bg-blue-900/50 text-blue-300'}`}>
+                  {gainGoal ? '💪' : '🎯'}
+                </span>
               </div>
               <div className="space-y-0.5 text-xs">
                 <div className="flex justify-between text-slate-500">
@@ -319,9 +349,9 @@ function GraficosTab({ members, weighIns }) {
                   <span>Actual</span><span className="text-slate-300">{latest?.weight_kg.toFixed(1) ?? '—'} kg</span>
                 </div>
                 <div className="flex justify-between text-slate-500">
-                  <span>Perdida</span>
-                  <span className={loss !== null ? (loss > 0 ? 'text-green-400 font-bold' : 'text-red-400') : 'text-slate-600'}>
-                    {loss !== null ? `${loss > 0 ? '−' : '+'}${Math.abs(loss).toFixed(1)} kg` : '—'}
+                  <span>Cambio</span>
+                  <span className={totalChange !== null ? (changeIsGood ? 'text-green-400 font-bold' : totalChange === 0 ? 'text-slate-400' : 'text-red-400') : 'text-slate-600'}>
+                    {totalChange !== null ? `${totalChange > 0 ? '+' : ''}${totalChange.toFixed(1)} kg` : '—'}
                   </span>
                 </div>
               </div>
@@ -345,8 +375,11 @@ function MiembrosTab({ members, weighIns, onSelectMember }) {
         const currentWeight = latest?.weight_kg ?? member.initial_weight_kg
         const bmi = calculateBMI(currentWeight, member.height_cm)
         const bmiCat = getBMICategory(bmi)
+        const gainGoal = isGainGoal(member.initial_weight_kg, member.goal_weight_kg)
         const progress = calcGoalProgress(member.initial_weight_kg, currentWeight, member.goal_weight_kg)
-        const remaining = currentWeight - member.goal_weight_kg
+        const remaining = gainGoal
+          ? member.goal_weight_kg - currentWeight
+          : currentWeight - member.goal_weight_kg
 
         return (
           <button
@@ -357,7 +390,12 @@ function MiembrosTab({ members, weighIns, onSelectMember }) {
             <div className="flex items-center gap-3 mb-3">
               <Avatar name={member.name} size="lg" />
               <div className="flex-1 min-w-0">
-                <h3 className="text-white font-semibold">{member.name}</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-white font-semibold">{member.name}</h3>
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full flex-shrink-0 ${gainGoal ? 'bg-purple-900/50 text-purple-300' : 'bg-blue-900/50 text-blue-300'}`}>
+                    {gainGoal ? '💪 Subir' : '🎯 Bajar'}
+                  </span>
+                </div>
                 <div className="flex items-center gap-2 text-xs mt-0.5">
                   <span className={bmiCat.color}>{bmiCat.label}</span>
                   <span className="text-slate-600">•</span>
@@ -374,7 +412,9 @@ function MiembrosTab({ members, weighIns, onSelectMember }) {
               <div className="flex justify-between text-xs text-slate-500">
                 <span>Meta: {member.goal_weight_kg} kg</span>
                 <span className={remaining > 0 ? 'text-slate-400' : 'text-green-400'}>
-                  {remaining > 0 ? `Faltan ${remaining.toFixed(1)} kg` : '¡Meta alcanzada! 🎉'}
+                  {remaining > 0
+                    ? `Faltan ${remaining.toFixed(1)} kg ${gainGoal ? 'por ganar' : 'por perder'}`
+                    : '¡Meta alcanzada! 🎉'}
                 </span>
               </div>
               <ProgressBar value={progress} />
@@ -407,24 +447,31 @@ function MemberDetail({ memberId, members, allWeighIns, onBack }) {
     peso: w.weight_kg,
   }))
 
+  const gainGoal = member ? isGainGoal(member.initial_weight_kg, member.goal_weight_kg) : false
+
   const streak = useMemo(() => {
     let c = 0
     for (let i = sortedWIs.length - 1; i > 0; i--) {
-      if (sortedWIs[i].weight_kg < sortedWIs[i - 1].weight_kg) c++
+      const improved = gainGoal
+        ? sortedWIs[i].weight_kg > sortedWIs[i - 1].weight_kg
+        : sortedWIs[i].weight_kg < sortedWIs[i - 1].weight_kg
+      if (improved) c++
       else break
     }
     return c
-  }, [sortedWIs])
+  }, [sortedWIs, gainGoal])
 
   if (!member) return null
 
   const latest = sortedWIs.at(-1)
   const currentWeight = latest?.weight_kg ?? member.initial_weight_kg
-  const totalLoss = member.initial_weight_kg - currentWeight
+  const totalChange = currentWeight - member.initial_weight_kg
   const bmi = calculateBMI(currentWeight, member.height_cm)
   const bmiCat = getBMICategory(bmi)
   const progress = calcGoalProgress(member.initial_weight_kg, currentWeight, member.goal_weight_kg)
-  const remaining = currentWeight - member.goal_weight_kg
+  const remaining = gainGoal
+    ? member.goal_weight_kg - currentWeight
+    : currentWeight - member.goal_weight_kg
 
   return (
     <div className="space-y-4">
@@ -448,9 +495,18 @@ function MemberDetail({ memberId, members, allWeighIns, onBack }) {
       <div className="grid grid-cols-2 gap-2">
         {[
           { label: 'Peso actual', value: `${currentWeight.toFixed(1)} kg`, color: 'text-white' },
-          { label: 'Pérdida total', value: `${totalLoss >= 0 ? '−' : '+'}${Math.abs(totalLoss).toFixed(1)} kg`, color: totalLoss > 0 ? 'text-green-400' : 'text-red-400' },
+          {
+            label: gainGoal ? 'Ganancia total' : 'Pérdida total',
+            value: `${totalChange > 0 ? '+' : ''}${totalChange.toFixed(1)} kg`,
+            color: (gainGoal ? totalChange > 0 : totalChange < 0) ? 'text-green-400' : totalChange === 0 ? 'text-slate-400' : 'text-red-400',
+          },
           { label: 'IMC actual', value: bmi.toFixed(1), sub: bmiCat.label, color: bmiCat.color },
-          { label: 'Racha bajando', value: `${streak} sem`, sub: streak >= 2 ? '🔥' : streak === 1 ? '✅' : '—', color: streak >= 2 ? 'text-orange-400' : 'text-slate-400' },
+          {
+            label: gainGoal ? 'Racha subiendo' : 'Racha bajando',
+            value: `${streak} sem`,
+            sub: streak >= 2 ? '🔥' : streak === 1 ? '✅' : '—',
+            color: streak >= 2 ? 'text-orange-400' : 'text-slate-400',
+          },
         ].map((s) => (
           <div key={s.label} className="bg-slate-800 border border-slate-700 rounded-xl p-3 text-center">
             <div className={`text-lg font-bold ${s.color}`}>{s.value}</div>
@@ -473,7 +529,9 @@ function MemberDetail({ memberId, members, allWeighIns, onBack }) {
         <div className="flex justify-between text-xs">
           <span className="text-slate-500">{progress.toFixed(1)}% completado</span>
           <span className={remaining > 0 ? 'text-blue-400' : 'text-green-400'}>
-            {remaining > 0 ? `Faltan ${remaining.toFixed(1)} kg` : '¡Meta alcanzada! 🎉'}
+            {remaining > 0
+              ? `Faltan ${remaining.toFixed(1)} kg ${gainGoal ? 'por ganar' : 'por perder'}`
+              : '¡Meta alcanzada! 🎉'}
           </span>
         </div>
       </div>
@@ -517,7 +575,8 @@ function MemberDetail({ memberId, members, allWeighIns, onBack }) {
             {[...sortedWIs].reverse().map((w, idx, arr) => {
               const prev = arr[idx + 1]
               const change = prev ? w.weight_kg - prev.weight_kg : null
-              const badge = getPerformanceBadge(change)
+              const badge = getPerformanceBadge(change, gainGoal)
+              const changeIsGood = change === null ? null : gainGoal ? change > 0 : change < 0
               const bmiRow = calculateBMI(w.weight_kg, member.height_cm)
               const bmiCatRow = getBMICategory(bmiRow)
               return (
@@ -535,7 +594,7 @@ function MemberDetail({ memberId, members, allWeighIns, onBack }) {
                       </div>
                     </div>
                     {change !== null && (
-                      <span className={`text-sm font-bold ${change < 0 ? 'text-green-400' : change > 0 ? 'text-red-400' : 'text-slate-400'}`}>
+                      <span className={`text-sm font-bold ${changeIsGood ? 'text-green-400' : change === 0 ? 'text-slate-400' : 'text-red-400'}`}>
                         {change > 0 ? '+' : ''}{change.toFixed(1)} kg
                       </span>
                     )}
