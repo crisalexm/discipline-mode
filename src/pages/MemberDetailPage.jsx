@@ -18,6 +18,7 @@ import {
   getBMICategory,
   calcGoalProgress,
   getPerformanceBadge,
+  isGainGoal,
   formatDate,
 } from '../lib/utils'
 
@@ -60,15 +61,20 @@ export default function MemberDetailPage() {
     bmi: parseFloat(calculateBMI(w.weight_kg, member?.height_cm || 170).toFixed(1)),
   }))
 
-  // Consecutive streak of weeks losing weight
+  const gainGoal = member ? isGainGoal(member.initial_weight_kg, member.goal_weight_kg) : false
+
+  // Consecutive streak of weeks moving toward goal
   const streak = useMemo(() => {
     let count = 0
     for (let i = sortedWeighIns.length - 1; i > 0; i--) {
-      if (sortedWeighIns[i].weight_kg < sortedWeighIns[i - 1].weight_kg) count++
+      const improved = gainGoal
+        ? sortedWeighIns[i].weight_kg > sortedWeighIns[i - 1].weight_kg  // gaining = good
+        : sortedWeighIns[i].weight_kg < sortedWeighIns[i - 1].weight_kg  // losing  = good
+      if (improved) count++
       else break
     }
     return count
-  }, [sortedWeighIns])
+  }, [sortedWeighIns, gainGoal])
 
   if (!member) {
     return (
@@ -83,11 +89,15 @@ export default function MemberDetailPage() {
 
   const latest = sortedWeighIns.at(-1)
   const currentWeight = latest?.weight_kg ?? member.initial_weight_kg
-  const totalLoss = member.initial_weight_kg - currentWeight
+  // totalChange: positive = gained, negative = lost (raw delta, direction-neutral)
+  const totalChange = currentWeight - member.initial_weight_kg
   const bmi = calculateBMI(currentWeight, member.height_cm)
   const bmiCat = getBMICategory(bmi)
   const progress = calcGoalProgress(member.initial_weight_kg, currentWeight, member.goal_weight_kg)
-  const remaining = currentWeight - member.goal_weight_kg
+  // remaining: how far from goal in the RIGHT direction
+  const remaining = gainGoal
+    ? member.goal_weight_kg - currentWeight   // positive = still needs to gain
+    : currentWeight - member.goal_weight_kg   // positive = still needs to lose
 
   return (
     <div className="space-y-4">
@@ -118,9 +128,16 @@ export default function MemberDetailPage() {
           color="text-white"
         />
         <StatCard
-          label="Pérdida total"
-          value={`${totalLoss >= 0 ? '-' : '+'}${Math.abs(totalLoss).toFixed(1)} kg`}
-          color={totalLoss > 0 ? 'text-green-400' : 'text-red-400'}
+          label={gainGoal ? 'Ganancia total' : 'Pérdida total'}
+          value={`${totalChange > 0 ? '+' : ''}${totalChange.toFixed(1)} kg`}
+          color={
+            // Good = moved toward goal
+            (gainGoal ? totalChange > 0 : totalChange < 0)
+              ? 'text-green-400'
+              : totalChange === 0
+              ? 'text-slate-400'
+              : 'text-red-400'
+          }
         />
         <StatCard
           label="IMC actual"
@@ -129,7 +146,7 @@ export default function MemberDetailPage() {
           color={bmiCat.color}
         />
         <StatCard
-          label="Racha bajando"
+          label={gainGoal ? 'Racha subiendo' : 'Racha bajando'}
           value={`${streak} sem`}
           color={streak >= 2 ? 'text-orange-400' : 'text-slate-400'}
           sub={streak >= 2 ? '🔥' : streak === 1 ? '✅' : '-'}
@@ -155,7 +172,9 @@ export default function MemberDetailPage() {
         <div className="flex justify-between text-xs">
           <span className="text-slate-500">{progress.toFixed(1)}% completado</span>
           <span className={remaining > 0 ? 'text-blue-400' : 'text-green-400'}>
-            {remaining > 0 ? `Faltan ${remaining.toFixed(1)} kg` : '¡Meta alcanzada! 🎉'}
+            {remaining > 0
+              ? `Faltan ${remaining.toFixed(1)} kg ${gainGoal ? 'por ganar' : 'por perder'}`
+              : '¡Meta alcanzada! 🎉'}
           </span>
         </div>
       </div>
@@ -209,9 +228,11 @@ export default function MemberDetailPage() {
             {[...sortedWeighIns].reverse().map((w, idx, arr) => {
               const prev = arr[idx + 1]
               const change = prev ? w.weight_kg - prev.weight_kg : null
-              const badge = getPerformanceBadge(change)
+              const badge = getPerformanceBadge(change, gainGoal)
               const bmiRow = calculateBMI(w.weight_kg, member.height_cm)
               const bmiCatRow = getBMICategory(bmiRow)
+              // Good change = moving toward goal
+              const changeIsGood = change === null ? null : gainGoal ? change > 0 : change < 0
 
               return (
                 <div key={w.id} className="px-4 py-3">
@@ -230,7 +251,7 @@ export default function MemberDetailPage() {
                       </div>
                     </div>
                     {change !== null && (
-                      <span className={`text-sm font-semibold ${change < 0 ? 'text-green-400' : change > 0 ? 'text-red-400' : 'text-slate-400'}`}>
+                      <span className={`text-sm font-semibold ${changeIsGood ? 'text-green-400' : change === 0 ? 'text-slate-400' : 'text-red-400'}`}>
                         {change > 0 ? '+' : ''}{change.toFixed(1)} kg
                       </span>
                     )}

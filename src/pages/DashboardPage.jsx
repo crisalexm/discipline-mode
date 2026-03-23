@@ -10,17 +10,25 @@ import {
   getPerformanceBadge,
   calcGoalProgress,
   getCurrentWeekNumber,
+  isGainGoal,
 } from '../lib/utils'
 
 function MotivationalMessage({ rankingData }) {
   const messages = useMemo(() => {
-    const fireCount = rankingData.filter((m) => m.weeklyChange !== null && m.weeklyChange <= -1.8).length
-    const losingCount = rankingData.filter((m) => m.weeklyChange !== null && m.weeklyChange < 0).length
+    // "On track" = progressing toward THEIR goal (loss or gain)
+    const onTrackCount = rankingData.filter((m) => {
+      if (m.weeklyChange === null) return false
+      return m.gainGoal ? m.weeklyChange > 0 : m.weeklyChange < 0
+    }).length
+    const fireCount = rankingData.filter((m) => {
+      if (m.weeklyChange === null) return false
+      return m.gainGoal ? m.weeklyChange >= 0.5 : m.weeklyChange <= -1.8
+    }).length
     const total = rankingData.length
 
     if (fireCount >= total * 0.6) return { msg: '¡El grupo está EN LLAMAS! 🔥 Semana épica.', color: 'from-orange-900/40 to-red-900/40 border-orange-700' }
-    if (losingCount >= total * 0.7) return { msg: '¡Gran semana! La mayoría del grupo está bajando. 💪', color: 'from-green-900/40 to-teal-900/40 border-green-700' }
-    if (losingCount >= total * 0.4) return { msg: 'Mitad del grupo avanzando. ¡A darle más! 💙', color: 'from-blue-900/40 to-indigo-900/40 border-blue-700' }
+    if (onTrackCount >= total * 0.7) return { msg: '¡Gran semana! La mayoría avanzando hacia su meta. 💪', color: 'from-green-900/40 to-teal-900/40 border-green-700' }
+    if (onTrackCount >= total * 0.4) return { msg: 'Mitad del grupo en camino. ¡A darle más! 💙', color: 'from-blue-900/40 to-indigo-900/40 border-blue-700' }
     return { msg: 'Semana difícil. ¡El lunes se retoma con todo! 💪', color: 'from-slate-800 to-slate-700 border-slate-600' }
   }, [rankingData])
 
@@ -82,32 +90,33 @@ export default function DashboardPage() {
 
       const currentWeight = weekWeighIn?.weight_kg ?? null
       const initialWeight = member.initial_weight_kg ?? initialWeighIn?.weight_kg ?? null
-      const totalLoss = currentWeight !== null && initialWeight !== null ? initialWeight - currentWeight : null
+      const gainGoal = isGainGoal(initialWeight, member.goal_weight_kg)
+      // totalChange: positive = gained, negative = lost
+      const totalChange = currentWeight !== null && initialWeight !== null ? currentWeight - initialWeight : null
       const weeklyChange = currentWeight !== null && prevWeekWeighIn ? currentWeight - prevWeekWeighIn.weight_kg : null
       const goalProgress = currentWeight !== null ? calcGoalProgress(initialWeight, currentWeight, member.goal_weight_kg) : 0
       const bmi = currentWeight !== null ? calculateBMI(currentWeight, member.height_cm) : null
       const bmiCat = bmi !== null ? getBMICategory(bmi) : null
-      const badge = getPerformanceBadge(weeklyChange)
+      const badge = getPerformanceBadge(weeklyChange, gainGoal)
 
       return {
         ...member,
         currentWeight,
         initialWeight,
-        totalLoss,
+        totalChange,
         weeklyChange,
         goalProgress,
+        gainGoal,
         bmi,
         bmiCat,
         badge,
         hasData: weekWeighIn !== null,
       }
     }).sort((a, b) => {
-      // Sort: those with data first, then by total loss desc
+      // Sort by goal progress % desc (works for both loss and gain)
       if (a.hasData && !b.hasData) return -1
       if (!a.hasData && b.hasData) return 1
-      if (a.totalLoss === null) return 1
-      if (b.totalLoss === null) return -1
-      return b.totalLoss - a.totalLoss
+      return b.goalProgress - a.goalProgress
     })
   }, [members, weighIns, selectedWeek])
 
@@ -142,8 +151,12 @@ export default function DashboardPage() {
       <div className="grid grid-cols-3 gap-3">
         {[
           {
-            label: 'Total perdido',
-            value: rankingData.reduce((acc, m) => acc + (m.totalLoss || 0), 0).toFixed(1) + ' kg',
+            label: 'kg perdidos (grupo)',
+            // Only count loss-goal members' losses
+            value: rankingData
+              .filter((m) => !m.gainGoal && m.totalChange !== null && m.totalChange < 0)
+              .reduce((acc, m) => acc + Math.abs(m.totalChange), 0)
+              .toFixed(1) + ' kg',
             color: 'text-green-400',
           },
           {
@@ -153,7 +166,10 @@ export default function DashboardPage() {
           },
           {
             label: '🔥 En llamas',
-            value: rankingData.filter((m) => m.weeklyChange !== null && m.weeklyChange <= -1.8).length,
+            value: rankingData.filter((m) => {
+              if (m.weeklyChange === null) return false
+              return m.gainGoal ? m.weeklyChange >= 0.5 : m.weeklyChange <= -1.8
+            }).length,
             color: 'text-orange-400',
           },
         ].map((stat) => (
@@ -180,7 +196,7 @@ export default function DashboardPage() {
                 <th className="text-left px-4 py-3">Nombre</th>
                 <th className="text-right px-4 py-3">Peso Inicial</th>
                 <th className="text-right px-4 py-3">Peso Actual</th>
-                <th className="text-right px-4 py-3">Pérdida Total</th>
+                <th className="text-right px-4 py-3">Cambio Total</th>
                 <th className="text-right px-4 py-3">Semana</th>
                 <th className="text-right px-4 py-3">% Meta</th>
                 <th className="text-center px-4 py-3">Estado</th>
@@ -201,7 +217,12 @@ export default function DashboardPage() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <Avatar name={member.name} size="sm" />
-                      <span className="text-white font-medium">{member.name}</span>
+                      <div>
+                        <span className="text-white font-medium">{member.name}</span>
+                        <span className={`ml-2 text-xs px-1.5 py-0.5 rounded-full ${member.gainGoal ? 'bg-purple-900/50 text-purple-300' : 'bg-blue-900/50 text-blue-300'}`}>
+                          {member.gainGoal ? '💪 Subir' : '🎯 Bajar'}
+                        </span>
+                      </div>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-right text-slate-400">{member.initialWeight?.toFixed(1) ?? '-'} kg</td>
@@ -209,18 +230,27 @@ export default function DashboardPage() {
                     {member.currentWeight !== null ? `${member.currentWeight.toFixed(1)} kg` : <span className="text-slate-500">Pendiente ⏳</span>}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {member.totalLoss !== null ? (
-                      <span className={member.totalLoss > 0 ? 'text-green-400 font-semibold' : 'text-red-400'}>
-                        {member.totalLoss > 0 ? '-' : '+'}{Math.abs(member.totalLoss).toFixed(1)} kg
-                      </span>
-                    ) : '-'}
+                    {member.totalChange !== null ? (() => {
+                      // Good = moving toward goal
+                      const good = member.gainGoal ? member.totalChange > 0 : member.totalChange < 0
+                      const sign = member.totalChange > 0 ? '+' : ''
+                      return (
+                        <span className={`font-semibold ${good ? 'text-green-400' : member.totalChange === 0 ? 'text-slate-400' : 'text-red-400'}`}>
+                          {sign}{member.totalChange.toFixed(1)} kg
+                        </span>
+                      )
+                    })() : '-'}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {member.weeklyChange !== null ? (
-                      <span className={member.weeklyChange < 0 ? 'text-green-400' : member.weeklyChange > 0 ? 'text-red-400' : 'text-slate-400'}>
-                        {member.weeklyChange > 0 ? '+' : ''}{member.weeklyChange.toFixed(1)} kg
-                      </span>
-                    ) : '-'}
+                    {member.weeklyChange !== null ? (() => {
+                      const good = member.gainGoal ? member.weeklyChange > 0 : member.weeklyChange < 0
+                      const sign = member.weeklyChange > 0 ? '+' : ''
+                      return (
+                        <span className={good ? 'text-green-400' : member.weeklyChange === 0 ? 'text-slate-400' : 'text-red-400'}>
+                          {sign}{member.weeklyChange.toFixed(1)} kg
+                        </span>
+                      )
+                    })() : '-'}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-col gap-1 items-end">
@@ -256,21 +286,32 @@ export default function DashboardPage() {
                     <span className="text-xl">{member.badge.emoji}</span>
                   </div>
                   <div className="flex items-center gap-3 mt-1 text-xs text-slate-400">
+                    <span className={`px-1.5 py-0.5 rounded-full ${member.gainGoal ? 'bg-purple-900/50 text-purple-300' : 'bg-blue-900/50 text-blue-300'}`}>
+                      {member.gainGoal ? '💪 Subir' : '🎯 Bajar'}
+                    </span>
                     <span>
                       {member.currentWeight !== null
                         ? `${member.currentWeight.toFixed(1)} kg`
                         : 'Pendiente ⏳'}
                     </span>
-                    {member.totalLoss !== null && (
-                      <span className={member.totalLoss > 0 ? 'text-green-400' : 'text-red-400'}>
-                        {member.totalLoss > 0 ? '-' : '+'}{Math.abs(member.totalLoss).toFixed(1)} kg total
-                      </span>
-                    )}
-                    {member.weeklyChange !== null && (
-                      <span className={member.weeklyChange < 0 ? 'text-green-400' : 'text-red-400'}>
-                        {member.weeklyChange > 0 ? '+' : ''}{member.weeklyChange.toFixed(1)} sem
-                      </span>
-                    )}
+                    {member.totalChange !== null && (() => {
+                      const good = member.gainGoal ? member.totalChange > 0 : member.totalChange < 0
+                      const sign = member.totalChange > 0 ? '+' : ''
+                      return (
+                        <span className={good ? 'text-green-400' : member.totalChange === 0 ? 'text-slate-400' : 'text-red-400'}>
+                          {sign}{member.totalChange.toFixed(1)} kg
+                        </span>
+                      )
+                    })()}
+                    {member.weeklyChange !== null && (() => {
+                      const good = member.gainGoal ? member.weeklyChange > 0 : member.weeklyChange < 0
+                      const sign = member.weeklyChange > 0 ? '+' : ''
+                      return (
+                        <span className={good ? 'text-green-400' : member.weeklyChange === 0 ? 'text-slate-400' : 'text-red-400'}>
+                          {sign}{member.weeklyChange.toFixed(1)} sem
+                        </span>
+                      )
+                    })()}
                   </div>
                   <div className="mt-2 flex items-center gap-2">
                     <ProgressBar value={member.goalProgress} className="flex-1" />

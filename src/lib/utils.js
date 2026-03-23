@@ -38,24 +38,52 @@ export function getBMICategory(bmi) {
 }
 
 /**
- * Get performance badge based on weekly change
+ * Returns true if the member's goal is to gain weight (e.g. muscle mass)
  */
-export function getPerformanceBadge(weeklyChange) {
-  if (weeklyChange === null || weeklyChange === undefined) return { emoji: '⏳', label: 'Pendiente', color: 'text-slate-400' }
-  if (weeklyChange <= -1.8) return { emoji: '🔥', label: '¡En llamas!', color: 'text-orange-400' }
-  if (weeklyChange < 0) return { emoji: '✅', label: 'Bajando', color: 'text-green-400' }
-  if (weeklyChange === 0) return { emoji: '⚠️', label: 'Sin cambio', color: 'text-yellow-400' }
-  return { emoji: '📈', label: 'Subió', color: 'text-red-400' }
+export function isGainGoal(initialWeight, goalWeight) {
+  return goalWeight > initialWeight
 }
 
 /**
- * Calculate progress percentage toward goal
+ * Get performance badge based on weekly change.
+ * gainGoal=true  → gaining weight is good 💪
+ * gainGoal=false → losing weight is good  🔥
+ */
+export function getPerformanceBadge(weeklyChange, gainGoal = false) {
+  if (weeklyChange === null || weeklyChange === undefined)
+    return { emoji: '⏳', label: 'Pendiente', color: 'text-slate-400' }
+
+  if (!gainGoal) {
+    // Weight-loss goal
+    if (weeklyChange <= -1.8) return { emoji: '🔥', label: '¡En llamas!', color: 'text-orange-400' }
+    if (weeklyChange < 0)     return { emoji: '✅', label: 'Bajando',     color: 'text-green-400' }
+    if (weeklyChange === 0)   return { emoji: '⚠️', label: 'Sin cambio', color: 'text-yellow-400' }
+    return                           { emoji: '📈', label: 'Subió',       color: 'text-red-400' }
+  } else {
+    // Weight-gain goal
+    if (weeklyChange >= 0.5) return { emoji: '💪', label: '¡Ganando!',   color: 'text-green-400' }
+    if (weeklyChange > 0)    return { emoji: '✅', label: 'Subiendo',     color: 'text-green-400' }
+    if (weeklyChange === 0)  return { emoji: '⚠️', label: 'Sin cambio',  color: 'text-yellow-400' }
+    return                          { emoji: '📉', label: 'Bajó',         color: 'text-red-400' }
+  }
+}
+
+/**
+ * Calculate progress percentage toward goal (works for both loss and gain).
  */
 export function calcGoalProgress(initialWeight, currentWeight, goalWeight) {
   if (initialWeight === goalWeight) return 100
-  const totalToLose = initialWeight - goalWeight
-  const lost = initialWeight - currentWeight
-  return Math.min(100, Math.max(0, (lost / totalToLose) * 100))
+  if (isGainGoal(initialWeight, goalWeight)) {
+    // Gain: how much of the target gained so far
+    const totalToGain = goalWeight - initialWeight
+    const gained = currentWeight - initialWeight
+    return Math.min(100, Math.max(0, (gained / totalToGain) * 100))
+  } else {
+    // Loss: how much of the target lost so far
+    const totalToLose = initialWeight - goalWeight
+    const lost = initialWeight - currentWeight
+    return Math.min(100, Math.max(0, (lost / totalToLose) * 100))
+  }
 }
 
 /**

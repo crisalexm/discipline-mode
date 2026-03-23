@@ -4,7 +4,7 @@ import { Plus, X, Target, Ruler, Weight } from 'lucide-react'
 import { useMembers } from '../hooks/useMembers'
 import { useWeighIns } from '../hooks/useWeighIns'
 import Avatar from '../components/Avatar'
-import { calculateBMI, getBMICategory, calcGoalProgress } from '../lib/utils'
+import { calculateBMI, getBMICategory, calcGoalProgress, isGainGoal } from '../lib/utils'
 
 function AddMemberModal({ onClose, onAdd }) {
   const [form, setForm] = useState({ name: '', height_cm: '', initial_weight_kg: '', goal_weight_kg: '' })
@@ -106,8 +106,12 @@ export default function MembersPage() {
           const currentWeight = latest?.weight_kg ?? member.initial_weight_kg
           const bmi = calculateBMI(currentWeight, member.height_cm)
           const bmiCat = getBMICategory(bmi)
+          const gainGoal = isGainGoal(member.initial_weight_kg, member.goal_weight_kg)
           const progress = calcGoalProgress(member.initial_weight_kg, currentWeight, member.goal_weight_kg)
-          const remaining = currentWeight - member.goal_weight_kg
+          // remaining: how far from goal (direction-aware)
+          const remaining = gainGoal
+            ? member.goal_weight_kg - currentWeight   // positive = still needs to gain
+            : currentWeight - member.goal_weight_kg   // positive = still needs to lose
 
           return (
             <div
@@ -118,7 +122,12 @@ export default function MembersPage() {
               <div className="flex items-center gap-3 mb-3">
                 <Avatar name={member.name} size="lg" />
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-white font-semibold truncate">{member.name}</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-white font-semibold truncate">{member.name}</h3>
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full flex-shrink-0 ${gainGoal ? 'bg-purple-900/50 text-purple-300' : 'bg-blue-900/50 text-blue-300'}`}>
+                      {gainGoal ? '💪 Subir' : '🎯 Bajar'}
+                    </span>
+                  </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className={`text-xs font-medium ${bmiCat.color}`}>{bmiCat.label}</span>
                     <span className="text-slate-600">•</span>
@@ -135,7 +144,11 @@ export default function MembersPage() {
               <div className="space-y-1.5">
                 <div className="flex justify-between text-xs text-slate-500">
                   <span>Meta: {member.goal_weight_kg} kg</span>
-                  <span className="text-slate-400">{remaining > 0 ? `Faltan ${remaining.toFixed(1)} kg` : '¡Meta alcanzada! 🎉'}</span>
+                  <span className="text-slate-400">
+                    {remaining > 0
+                      ? `Faltan ${remaining.toFixed(1)} kg ${gainGoal ? 'por ganar' : 'por perder'}`
+                      : '¡Meta alcanzada! 🎉'}
+                  </span>
                 </div>
                 <div className="bg-slate-700 rounded-full h-2">
                   <div
